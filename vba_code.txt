@@ -1,0 +1,159 @@
+' ===============================
+' Function IS_MONOTONE()
+' This function return TRUE
+' if the given array/range values
+' have an increasing monotonic
+' relationship.
+' ===============================
+Public Function IS_MONOTONE(rng As Range)
+    Dim cell As Range ' define range iterator
+    
+    For Each cell In rng
+        If cell.Value > cell.Offset(1, 0).Value Then
+            IS_MONOTONE = False
+            Exit Function
+            ' could be interesting to return first pivot occurrence
+        End If
+    Next cell
+    
+    IS_MONOTONE = True
+    
+End Function
+' ================================
+' Function GET_OBS
+' This function returns the number
+' of observations corresponding
+' to a given PD/ORR data point
+' ================================
+Public Function GET_OBS(cell As Range, offst As Integer) As Range
+    Set GET_OBS = cell.Offset(0, -(1 + offst))
+    Exit Function
+End Function
+' ================================
+' Function GET_DEFAULTS
+' This function returns the number
+' of defaults corresponding
+' to a given PD/ORR data point
+' ================================
+Public Function GET_DEFAULTS(cell As Range, offst As Integer) As Range
+    Set GET_DEFAULTS = cell.Offset(0, -(2 + offst))
+    Exit Function
+End Function
+' ========================================
+' Function PRE_PROCESS
+' This function does any pre-processing to
+' the initial PDs.
+' Here is a list:
+' -> if PD == 0 then PD = 0.0003
+' ========================================
+Public Function PRE_PROCESS(rng As Range) As Range
+    Dim cell As Range ' define range iterator
+    
+    For Each cell In rng
+        If cell.Value = 0 Then
+            cell.Offset(0, 1).Value = 0.0003
+        Else
+            cell.Offset(0, 1).Value = cell.Value
+        End If
+    Next cell
+    
+    rng.Offset(0, 1).Cells(rng.Count + 1).Value = 1
+            
+    Set PRE_PROCESS = rng.Offset(, 1)
+            
+End Function
+' ======================================================
+' Function SMOOTH
+' This function smoothes an array of PDs
+' making sure there is an indirect relationship
+' between PDs and risk ratings. It uses the count
+' of defaults and total count for each risk rating level.
+' ======================================================
+Sub Smooth()
+    Dim current_rng As Range ' define initial range of PDs
+    Dim temp_rng As Range ' Create a temporary range to make sure its length does not change
+        
+    Set current_rng = Application.InputBox(Prompt:="Please Select a Range", Title:="InputBox Method", Type:=8)
+    Set temp_rng = current_rng ' update temporary range to user input range
+    
+    Dim iter_count As Integer ' define iteration counter
+    iter_count = 0 ' set iteration counter at 0
+    
+    ' PRE PROCESS initial PDs
+    Set current_rng = PRE_PROCESS(current_rng)
+    iter_count = iter_count + 1
+    
+    ' Create a const variable that holds the length of the initial range
+    Dim range_length As Integer
+    range_length = temp_rng.Count
+    
+    ' --------------------------------------------------------------------------------------------------------
+    ' WHILE LOOP until the pd array is smooth (monotonic)
+    ' --------------------------------------------------------------------------------------------------------
+    Do While IS_MONOTONE(current_rng) = False
+        Dim i As Integer
+        i = 1
+        For i = 1 To range_length
+            If current_rng.Cells(i).Value = current_rng.Cells(i + 1).Value And current_rng.Cells(i).Value <> 0.0003 Then
+                ' Loop to count how many times current cell pd == next cell pd
+                Dim cnt As Integer
+                cnt = 1
+                Do While current_rng.Cells(i) = current_rng.Cells(i + cnt)
+                    cnt = cnt + 1 ' update cnt
+                Loop
+                
+                If current_rng.Cells(i) > current_rng.Cells(i + cnt) Then
+                    ' Calculate PD for range
+                    Dim pd As Double
+                    Dim rng1 As Range
+                    Dim rng2 As Range
+                    Set rng1 = GET_DEFAULTS(Range(current_rng.Cells(i), current_rng.Cells(i + cnt)), iter_count)
+                    Set rng2 = GET_OBS(Range(current_rng.Cells(i), current_rng.Cells(i + cnt)), iter_count)
+                    pd = WorksheetFunction.Sum(rng1) / WorksheetFunction.Sum(rng2)
+                    
+                    ' Make sure (i + cnt) <= range_length, otherwise set cnt = range_length - i
+                    Dim cnt2 As Integer
+                    If (i + cnt) > range_length Then
+                        cnt2 = range_length - i
+                    Else
+                        cnt2 = cnt
+                    End If
+                    
+                    ' Update rows
+                    Range(current_rng.Offset(0, 1).Cells(i), current_rng.Offset(0, 1).Cells(i + cnt2)).Value = pd
+                    i = i + cnt2
+                Else
+                    ' Update rows
+                    Range(current_rng.Offset(0, 1).Cells(i), current_rng.Offset(0, 1).Cells(i + cnt)).Value = Range(current_rng.Cells(i), current_rng.Cells(i + cnt)).Value
+                End If
+            
+            ElseIf current_rng.Cells(i).Value > current_rng.Cells(i + 1).Value And current_rng.Cells(i).Value <> 0.0003 Then
+                
+                ' Calculate PD for range
+                Set rng1 = GET_DEFAULTS(Range(current_rng.Cells(i), current_rng.Cells(i + 1)), iter_count)
+                Set rng2 = GET_OBS(Range(current_rng.Cells(i), current_rng.Cells(i + 1)), iter_count)
+                pd = WorksheetFunction.Sum(rng1) / WorksheetFunction.Sum(rng2)
+                
+                ' Make sure (i + 1) <= range_length
+                
+                ' Update rows
+                Range(current_rng.Offset(0, 1).Cells(i), current_rng.Offset(0, 1).Cells(i + 1)).Value = pd
+                i = i + 1
+                
+            Else
+                ' Update rows
+                current_rng.Offset(0, 1).Cells(i).Value = current_rng.Cells(i).Value
+            End If
+        Next i
+        
+        ' Update iteration counter
+        iter_count = iter_count + 1
+        
+        ' Update current range by shifting to the left
+        current_rng.Offset(, 1).Cells(range_length + 1).Value = 1
+        Set current_rng = current_rng.Offset(, 1)
+    Loop
+    ' --------------------------------------------------------------------------------------------------------
+    ' END OF WHILE LOOP
+    ' --------------------------------------------------------------------------------------------------------
+End Sub
